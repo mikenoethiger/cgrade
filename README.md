@@ -35,11 +35,12 @@ If everything worked, this should return the absolute path to the cgrade program
 
 # Developers
 
-The cgrade source code is located in `cgrade.c`. The [ctest](https://github.com/mikenoethiger/ctest) library is used to do unit testing. The unit tests can be found in `cgrade_test.c`. The main method for the `cgrade.c` file is outsourced to `cgrade_main.c`. This is required, because `cgrade_test.c` which imports `cgrade.c` also uses a main method and only one main method is allowed in a C program.
- program
-A makefile has been created to automate some tasks. The make targets are described in the following.
+The cgrade source code is located in `cgrade.c`. The [ctest](https://github.com/mikenoethiger/ctest) library is used to do unit testing.
+The unit tests can be found in `cgrade_test.c`. The main method for the `cgrade.c` file is outsourced to `cgrade_main.c`. 
+This is required, because `cgrade_test.c` which imports `cgrade.c` also uses a main method and only one main method is allowed in a C program.
+A makefile has been created to automate common tasks. The make targets are described in the following.
 
-Compile and run unit tests (bot targets described below):
+Compile and run unit tests (both targets described below):
 
     $ make
 
