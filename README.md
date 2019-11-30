@@ -5,7 +5,7 @@ A simple command line program that manages grades based on a csv file.
 
 # Usage
 
-Init a new .csv file in the current directory:
+Init a new cgrade.csv file in the working directory:
 
     $ cgrade init
 
