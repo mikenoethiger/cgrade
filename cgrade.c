@@ -8,6 +8,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <stdbool.h>
+#include "libs/ctoolbox.c"
 
 /* Interface:
  * cgrade init                      // init the cgrade.csv in working directory
@@ -18,22 +19,18 @@
  * cgrade rm algd2 5.25             // remove grade in algd2 that is 5.25 (equivalent to `rm algd2 5.25 0`)
  * cgrade rm algd2 5.25 1           // remove the 2nd grade in algd2 that is 5.25
  *
- * Ideas on Options handling:
- * Pseudo Algorithm:
- * let char **cmd be a pointer to the current word to be processed
- * while (cmd is an option)
- *  cmd = process_option(cmd)
- * process_cmd(cmd)
- * 
- * char **process_option(cmd) {
- *    if (help option) print usage and exit
- *    else if (other option) do some other setup
- *    else print "unkown option", error_exit()
- * }
+ * Improvements Pending:
+ * - Instead of reading and writing the csv file manually whenever some
+ *   change is required, abstract the file by providing a data structure
+ *   that can hold grades and then implement a function that reads from
+ *   the csv file into the data structure and a function that writes the
+ *   data structure into the csv file. This way, the data can be manipulated
+ *   on a C level rather than on OS based read/write operations.
  */
 
 #define APP_NAME "cgrade"
-#define TMP_opt_default_csv "./tmp_cgrade.csv"
+#define DEFAULT_CSV_NAME "cgrade.csv"
+#define TMP_CSV_PATH "./tmp_cgrade.csv"
 #define CSV_HEADER "subject;grade;comment"
 #define CSV_DELIMITER ';'
 
@@ -50,7 +47,7 @@
 
 #define OPT_USAGE_CSV "Path to the csv file that contains the grades"
 
-char *opt_default_csv = "./cgrade.csv";
+char *opt_default_csv = "./" DEFAULT_CSV_NAME;
 
 typedef struct subject {
     char *name;
@@ -72,20 +69,6 @@ void subject_insert_grade(Subject *subject, float grade) {
     subject->grades[subject->n_grades-1] = grade;
 }
 
-/**
- * prints msg along with error message based on errno
- * (optiona) msg additional message or null
- */
-void exit_error(char *msg) {
-    char *error_msg = strerror(errno);
-    if (msg == NULL) {
-        printf("%s (%d)\n", error_msg, errno);
-    } else {
-        printf("%s: %s (%d)\n", msg, error_msg, errno);
-    }
-    exit(errno);
-}
-
 void exit_usage(int exit_code) {
     printf("\nUsage: %s COMMAND\n", APP_NAME);
     printf("\n");
@@ -97,6 +80,26 @@ void exit_usage(int exit_code) {
     printf("\n");
     printf("Run '%s COMMAND --help' for more information on a command.\n", APP_NAME);
     exit(exit_code);
+}
+
+void exit_unknown_option(char *option) {
+    printf("Unknown option %s\n", option);
+    exit(1);
+}
+
+void exit_no_csv() {
+    printf("%s does not exist. Init a new .csv file with:\n\t%s %s\n", opt_default_csv, APP_NAME, CMD_NAME_INIT);
+    exit(1);
+}
+
+void exit_unknown_cmd(char *cmd) {
+    printf("Unknown command '%s'\n", cmd);
+    exit(1);
+}
+
+void exit_csv_already_initialized() {
+    printf("%s already initialized.\n", DEFAULT_CSV_NAME);
+    exit(1);
 }
 
 void command_add_usage(int exit_code) {
@@ -115,6 +118,21 @@ void command_status_usage(int exit_code) {
 
 }
 
+bool csv_exists() {
+    struct stat st;
+    return stat(opt_default_csv, &st) != -1;
+}
+
+/**
+ * Ensures that the csv file exists.
+ */
+void csv_must_exist() {
+    struct stat st;
+    if (!csv_exists()) {
+        exit_no_csv();
+    }
+}
+
 /**
  * writes a \0 terminated string to an fd or exits
  * if write did not work
@@ -122,7 +140,7 @@ void command_status_usage(int exit_code) {
 ssize_t csv_write_string(int fd, char *s) {
     ssize_t b = write(fd, s, sizeof(*s) * strlen(s));
     if (b == -1) {
-        exit_error("write failed");
+        printerrno("write failed");
     }
     return b;
 }
@@ -130,10 +148,10 @@ ssize_t csv_write_string(int fd, char *s) {
 void csv_init_file() {
     int oflag = O_WRONLY | O_CREAT | O_EXCL | O_APPEND;
     int fd = open(opt_default_csv, oflag);
-    if (fd == -1) exit_error("init csv failed");
+    if (fd == -1) printerrno("init csv failed");
     csv_write_string(fd, "subject;grade;comment");
     csv_write_string(fd, "\n");
-    if (close(fd) == -1) exit_error(NULL);
+    if (close(fd) == -1) printerrno(NULL);
 }
 
 
@@ -143,7 +161,7 @@ size_t csv_move_to_next_line(int csv_fd) {
     size_t s = 0; 
     ssize_t r;
     while ((r = read(csv_fd, &buf, sizeof(buf)))) { 
-        if (r == -1) exit_error("csv_move_to_next_line read failed");
+        if (r == -1) printerrno("csv_move_to_next_line read failed");
         s += r;
         if (buf == '\n') break;
     }
@@ -164,7 +182,7 @@ char *csv_read_to_next(int csv_fd, char terminator) {
     char buf;
     ssize_t r;
     while ((r = read(csv_fd, &buf, sizeof(buf))) && buf != terminator) {
-        if (r == -1) exit_error("csv_read_to_next read failed");
+        if (r == -1) printerrno("csv_read_to_next read failed");
         out_size++;
         out = (char *) realloc(out, sizeof(char) * (out_size+1));
         out[out_size-1] = buf;
@@ -252,6 +270,11 @@ char *cmd_get_option(int n, char **cmd, char *option) {
     return NULL;
 }
 
+bool cmd_is_option(char *cmd) {
+    if (cmd[0] == '-') return true;
+    return false;
+}
+
 /**
  * moves the cmd array pointer forward to the first string
  * that is not an option. Everything that starts with
@@ -277,12 +300,15 @@ char **cmd_skip_options(int *n, char *cmd[]) {
 }
 
 /**
- * argc is the array size of args
- * args is an array with the command arguments
+ * Execute add command.
+ *
+ * arg(length)   size of args
+ * arg(args)     array with the command arguments
  */
-void command_add(int argc, char *args[]) {
-    if (argc > 0 && strcmp(*args, OPT_NAME_HELP) == 0) command_add_usage(0);
-    if (argc < 2) command_add_usage(-1);
+void command_add(int length, char *args[]) {
+    if (length > 0 && streq(*args, OPT_NAME_HELP)) command_add_usage(0);
+    if (length < 2) command_add_usage(-1);
+    csv_must_exist();
     char *subject = args[0];
     char *grade = args[1];
     float gradef = strtof(grade, NULL);
@@ -291,12 +317,12 @@ void command_add(int argc, char *args[]) {
         exit(-1);
     }
     char *msg = "";
-    if (argc > 2) msg = args[2];
+    if (length > 2) msg = args[2];
 
     int o_flag = O_WRONLY | O_APPEND;
     int fd = open(opt_default_csv, o_flag);
     if (fd == -1) {
-        exit_error("open file failed");
+        printerrno("open file failed");
     }
     csv_write_string(fd, subject);
     csv_write_string(fd, ";");
@@ -306,17 +332,26 @@ void command_add(int argc, char *args[]) {
     csv_write_string(fd, "\n");
 
     if (close(fd) == -1) {
-        exit_error(NULL);
+        printerrno(NULL);
     }
+
+    printf("added grade %.2f to %s!\n", gradef, subject);
 }
 
-void command_status(int argc, char *args[]) {
-    if (argc > 0 && strcmp(args[0], OPT_NAME_HELP) == 0) command_status_usage(0);
+/**
+ * Execute status command.
+ *
+ * arg(length)   size of args
+ * arg(args)     array with the command arguments
+ */
+void command_status(int length, char *args[]) {
+    if (length > 0 && streq(args[0], OPT_NAME_HELP)) command_status_usage(0);
+    csv_must_exist();
     int fd = open(opt_default_csv, O_RDONLY);
     int n_grades;
     float *grades;
     char *title;
-    if (argc > 0) {
+    if (length > 0) {
         grades = csv_subject_grades(fd, args[0], &n_grades);
         printf("Stats for %s\n", args[0]);
     } else {
@@ -335,7 +370,19 @@ void command_status(int argc, char *args[]) {
     printf("Avg: %.2f\n", avg);
 
     free(grades);
-    if (close(fd) == -1) exit_error("command_default close failed");
+    if (close(fd) == -1) printerrno("command_default close failed");
+}
+
+/**
+ * Execute init command.
+ *
+ * arg(length)   size of args
+ * arg(args)     array with the command arguments
+ */
+void command_init(int length, char **args) {
+    if (csv_exists()) exit_csv_already_initialized();
+    csv_init_file();
+    printf("%s successfully initialized!\n", DEFAULT_CSV_NAME);
 }
 
 void command_rm(int argc, char **args) {
@@ -358,73 +405,104 @@ void command_rm(int argc, char **args) {
     }
     
     int read_fd = open(opt_default_csv, O_RDONLY);
-    int write_fd = open(TMP_opt_default_csv, O_WRONLY | O_CREAT | O_APPEND);
-    char *header = csv_read_to_next(read_fd, CSV_DELIMITER);
-    write(write_fd, header, sizeof(char)*strlen(header));
+    int mode_t = S_IRUSR | S_IWUSR;
+    int write_fd = open(TMP_CSV_PATH, O_WRONLY | O_CREAT | O_TRUNC | O_APPEND, mode_t);
+
+    char *header = csv_read_to_next(read_fd, '\n');
     csv_write_string(write_fd, header);
     csv_write_string(write_fd, "\n");
-    char *pivot_subject = csv_read_to_next(read_fd, ';');
-    char *pivot_grade = csv_read_to_next(read_fd, ';');
+    char *pivot_subject = csv_read_to_next(read_fd, CSV_DELIMITER);
+    char *pivot_grade = csv_read_to_next(read_fd, CSV_DELIMITER);
+    char *pivot_comment = csv_read_to_next(read_fd, '\n');
     char *buffer;
     bool deleted = false;
-    int delete_counter = 1;
-    while (strlen(pivot_grade) != 0) {
-        if (strcmp(grade, pivot_grade) == 0 && strcmp(subject, pivot_subject) == 0 && delete_index == delete_counter) {
-            if (delete_index != delete_counter) {
-                delete_counter++;
-            } else {
+    int delete_position = 1;
+    while (strlen(pivot_subject) != 0) {
+        if (streq(grade, pivot_grade) && streq(subject, pivot_subject)) {
+            if (delete_index == delete_position) {
+                delete_position++;
                 deleted = true;
-                csv_move_to_next_line(read_fd);
-                break; 
+                // skip the line to be removed
+                printf("skipping line")
+                pivot_subject = csv_read_to_next(read_fd, ';');
+                pivot_grade = csv_read_to_next(read_fd, ';');
+                pivot_comment = csv_read_to_next(read_fd, '\n');
             }
         }
         csv_write_string(write_fd, pivot_subject);
         csv_write_string(write_fd, ";");
         csv_write_string(write_fd, pivot_grade);
         csv_write_string(write_fd, ";");
-        buffer = csv_read_to_next(read_fd, '\n');
-        csv_write_string(write_fd, buffer);
+        csv_write_string(write_fd, pivot_comment);
         csv_write_string(write_fd, "\n");
 
         pivot_subject = csv_read_to_next(read_fd, ';');
         pivot_grade = csv_read_to_next(read_fd, ';');
+        pivot_comment = csv_read_to_next(read_fd, '\n');
     }
     
-    buffer = csv_read_to_next(read_fd, '\n');
+    /*buffer = csv_read_to_next(read_fd, '\n');
     while (strlen(buffer) != 0) {
         csv_write_string(write_fd, buffer);
+        csv_write_string(write_fd, "\n");
         buffer = csv_read_to_next(read_fd, '\n');
+    }*/
+
+    if (remove(opt_default_csv) == -1) {
+        printerrno("failed to remove csv");
     }
+    if (rename(TMP_CSV_PATH, opt_default_csv) != 0) {
+        printerrno("failed to rename tmp csv");
+    }
+}
+
+int cmd_process_option_csv(int length, char **cmd) {
+    opt_default_csv = cmd[1]; 
+    return 2;
+}
+
+
+/*
+ * Processes a cmd option.
+ *
+ * arg(length)  length of the cmd array
+ * arg(cmd)     array containing the cmd elements
+ * returns the number of cmd items processed
+ */
+int cmd_process_option(int length, char **cmd) {
+    char *opt = cmd[0];
+    if (streq(OPT_NAME_CSV, opt)) {
+        return cmd_process_option_csv(length, cmd);
+    } else if (streq(OPT_NAME_HELP, opt)) {
+        exit_usage(0);
+    } else {
+        exit_unknown_option(opt);
+    }
+    return 0;
 }
 
 void command(int argc, char **argv) {
     argv++;
     argc--;
     if (argc < 1) exit_usage(-1);
-    char *option = cmd_get_option(argc, argv, OPT_NAME_HELP);
-    if (option != NULL) {
-        exit_usage(0);
+
+    while (cmd_is_option(argv[0])) { 
+        int processed = cmd_process_option(argc, argv);
+        argc -= processed;
+        argv += processed;
     }
 
-    option = cmd_get_option(argc, argv, OPT_NAME_CSV);
-    if (option != NULL) {
-        opt_default_csv = option;
-    }
-
-    // check if csv file exists
-    struct stat st;
-    if (stat(opt_default_csv, &st) == -1) {
-        csv_init_file();
-    }
-   
-    argv = cmd_skip_options(&argc, argv); 
+    //argv = cmd_skip_options(&argc, argv); 
     char *cmd = argv[0];
     if (strcmp(cmd, CMD_NAME_ADD) == 0) {
-        command_add(argc-2, argv+2);
+        command_add(argc-1, argv+1);
     } else if (strcmp(cmd, CMD_NAME_STATUS) == 0) {
-        command_status(argc-2, argv+2);
+        command_status(argc-1, argv+1);
+    } else if (strcmp(cmd, CMD_NAME_RM) == 0) {
+        command_rm(argc-1, argv+1);
+    } else if (streq(cmd, CMD_NAME_INIT)) {
+        command_init(argc-1, argv+1);
     } else {
-        printf("Unknown command '%s'\n", argv[1]);
-        exit_usage(-1);
+        exit_unknown_cmd(cmd);
     }
 }

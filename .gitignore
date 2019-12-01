@@ -3,3 +3,4 @@ out/*test
 *.csv
 playground.c
 *.swp
+.idea

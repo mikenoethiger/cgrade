@@ -2,6 +2,46 @@
 #include <string.h>
 #include "libs/ctest.h"
 #include "cgrade.c"
+#include <stdio.h>
+#include <unistd.h>
+
+#define TEST_CSV_FILE "./test_cgrade.csv"
+
+/**
+ * Creates a csv file and writes the specified content to it.
+ * The file is opened with read and write permissions.
+ *
+ * @param content to be written into the file
+ * @return the file descriptor
+ */
+static int test_csv_create(char *content) {
+    int mode_t = S_IRUSR | S_IWUSR;
+    int flags = O_RDWR | O_CREAT | O_TRUNC | O_APPEND;
+    int fd = open(TEST_CSV_FILE, flags, mode_t);
+
+    for (int i = 0; i < strlen(content); i++) {
+        if (write(fd, &content[i], sizeof(content[i])) == -1) {
+        	printerrno("write test csv failed");
+        }
+    }
+    return fd;
+}
+
+/**
+ * Deletes the test csv file.
+ */
+static void test_csv_delete() {
+	if (remove(TEST_CSV_FILE) == -1) {
+		printerrno("deleting test csv failed");
+	}
+}
+
+static int test_command_rm() {
+	/*int fd = test_csv_create("subject;grade;comment\nmath;5.2;First Exam\nmath;5.2;Second Exam\nmath;4.6;Third Exam\n");
+	char *cmd[] = {"math", "5.2"};
+	command_rm(2, cmd);*/
+	return 1;
+}
 
 static int test_subject_create() {
     char *name = "math";
@@ -75,7 +115,6 @@ static int test_playground() {
     char *names_arr[] = { "Mike", "Pascal" };
     char **names = names_arr;
     pointer(&names);
-    printf("%s\n", *names);
     return 1;
 }
 
