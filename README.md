@@ -23,7 +23,7 @@ For more actions refer to the user manual:
 
 # Installation
 
-Download the compiled C program located in this repository under [out/cgrade](https://github.com/mikenoethiger/cgrade/blob/master/out/cgrade). In order to make the `cgrade` program available independant of the current working directory, copy it to some place that is in the system $PATH variable. For example:
+Download the compiled C program located in this repository ([out/cgrade](https://github.com/mikenoethiger/cgrade/blob/master/out/cgrade)). In order to make the `cgrade` program available independent of the current working directory, copy it to some place that is in the system $PATH variable. For example:
 
     $ cp cgrade usr/local/bin
 
