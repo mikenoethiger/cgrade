@@ -1,6 +1,8 @@
 # About
 
-A simple command line program that manages grades based on a csv file.
+A simple command line tool with which you can manage school grades in a csv file.
+
+*Contact: noethiger.mike@gmail.com*
 
 
 # Usage
